@@ -41,7 +41,7 @@ class CompanyProfile():
         self.url_scouter = f'=HYPERLINK("https://monex.ifis.co.jp/index.php?sa=report_index&bcode={ticker}", "銘")'
         self.url_kabutan = f'=HYPERLINK("https://kabutan.jp/stock/?code={ticker}", "探")'
         self.url_keijiban = None
-
+        self.announcement_date = None
 
     def update(self):
         ticker = self.ticker
@@ -53,6 +53,9 @@ class CompanyProfile():
 
         minkabu_url2 = f"https://minkabu.jp/stock/{ticker}/settlement" #決算情報@みんかぶ
         minkabu_soup2 = self.get_soup(minkabu_url2)
+
+        kabutan_url = f"https://kabutan.jp/stock/?code={ticker}"
+        kabutan_soup = self.get_soup(kabutan_url)
 
         try:
             self.name = yahoo_soup.select_one(".symbol").text.replace("(株)", "")
@@ -75,11 +78,11 @@ class CompanyProfile():
         self.category = minkabu_soup.select(".stock-detail div.ly_content_wrapper.size_ss")[0].select_one("a").text
         self.description = minkabu_soup.select(".stock-detail div.ly_content_wrapper.size_ss")[1].text.strip()
 
-
         minkabu_table = minkabu_soup2.select(".data_table")[2].select(".num")
         self.ROA = float(minkabu_table[0].text[:-1].replace("--", "0"))
         self.ROE = float(minkabu_table[2].text[:-1].replace("--", "0"))
 
+        self.announcement_date = kabutan_soup.select_one("#kessan_happyoubi dd").text
 
 
     def get_soup(self, url):
@@ -99,7 +102,8 @@ column_convertor = {
     "description": "desc",
     "url_scouter": "銘",
     "url_kabutan": "探",
-    "url_keijiban": "掲"
+    "url_keijiban": "掲",
+    "announcement_date": "決算日"
 }
 
 for i in df.index:
@@ -115,6 +119,7 @@ for i in df.index:
 
     for attr in company.__dict__.keys():
         col = column_convertor[attr] if attr in column_convertor.keys() else attr
+        if company.__dict__[attr] is None: continue
         df.loc[i, col] = company.__dict__[attr]
     print("...done")
 
