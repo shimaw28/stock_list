@@ -10,10 +10,16 @@ from bs4 import BeautifulSoup
 
 arg = sys.argv
 
-if len(arg) > 1 and arg[1] == "all":
+if "all" in arg:
     UPDATE_ALL = True
 else:
     UPDATE_ALL = False
+
+if "price" in arg:
+    PRICE_ONLY = True
+    UPDATE_ALL = True
+else:
+    PRICE_ONLY = False
 
 gc = gspread.service_account(filename=".keys/shimandou-bot-07299fe8b747.json")
 wb = gc.open("stock_list")
@@ -82,7 +88,36 @@ class CompanyProfile():
         self.ROA = float(minkabu_table[0].text[:-1].replace("--", "0"))
         self.ROE = float(minkabu_table[2].text[:-1].replace("--", "0"))
 
-        self.announcement_date = kabutan_soup.select_one("#kessan_happyoubi dd").text
+        try:
+            self.announcement_date = kabutan_soup.select_one("#kessan_happyoubi dd").text
+            self.announcement_date = re.findall(r"[0-9/]+", self.announcement_date)[0]
+        except Exception as e:
+            print(e)
+            
+    def update_price(self):
+        ticker = self.ticker
+        yahoo_url = f"https://stocks.finance.yahoo.co.jp/stocks/detail/?code={ticker}.T"
+        yahoo_soup = self.get_soup(yahoo_url)
+ 
+        try:
+            self.name = yahoo_soup.select_one(".symbol").text.replace("(株)", "")
+        except Exception as e:
+            print("not found", e)
+            return
+
+        minkabu_url = f"https://minkabu.jp/stock/{ticker}"
+        minkabu_soup = self.get_soup(minkabu_url)
+
+        minkabu_page = minkabu_soup.select(".wsnw.fwb")
+        self.PER = float(minkabu_page[5].text[:-1].replace(",", "").replace("--", "0"))
+        self.PBR = float(minkabu_page[7].text[:-1].replace(",", "").replace("--", "0"))
+        self.PSR = float(minkabu_page[6].text[:-1].replace(",", "").replace("--", "0"))
+        self.dividend_rate  = float(minkabu_page[3].text[:-1].replace(",", "").replace("--", "0"))
+        self.market_cap = int(minkabu_page[9].text[:-3].replace(",", "").replace("--", "0"))
+
+        self.updated = datetime.datetime.now().strftime("%Y/%m/%d %H:%M")
+        self.price = float(yahoo_soup.select(".stoksPrice")[1].text.replace(",", ""))
+        self.daily_change = float(re.findall(r"（(.*)%）", yahoo_soup.select_one(".change").text)[0])
 
 
     def get_soup(self, url):
@@ -106,16 +141,22 @@ column_convertor = {
     "announcement_date": "決算日"
 }
 
+num = df.shape[0]
+
 for i in df.index:
     ticker = df.loc[i, "code"]
-    print(ticker, end="")
+    print(i+1, "/", num, "\t", ticker, end="")
 
     if not(UPDATE_ALL) and df.loc[i, "name"]:
         print("...skipped")
         continue
 
     company = CompanyProfile(ticker)
-    company.update()
+
+    if PRICE_ONLY:
+        company.update_price()
+    else:
+        company.update()
 
     for attr in company.__dict__.keys():
         col = column_convertor[attr] if attr in column_convertor.keys() else attr
