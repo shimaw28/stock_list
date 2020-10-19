@@ -2,7 +2,9 @@ import os
 import sys
 import requests
 import datetime
+import time
 import re
+import asyncio
 
 import gspread
 import pandas as pd
@@ -35,6 +37,9 @@ class CompanyProfile():
         self.name = None
         self.price = None
         self.daily_change = None
+        self.weekly_change = None
+        self.monthly_change = None
+        self.yearly_change = None
         self.PER = None
         self.PSR = None
         self.PBR = None
@@ -50,19 +55,29 @@ class CompanyProfile():
         self.announcement_date = None
 
     def update(self):
+        loop = asyncio.get_event_loop()
         ticker = self.ticker
+
         yahoo_url = f"https://stocks.finance.yahoo.co.jp/stocks/detail/?code={ticker}.T"
-        yahoo_soup = self.get_soup(yahoo_url)
-
         minkabu_url = f"https://minkabu.jp/stock/{ticker}"
-        minkabu_soup = self.get_soup(minkabu_url)
-
-        # 決算情報@みんかぶ
-        minkabu_url2 = f"https://minkabu.jp/stock/{ticker}/settlement"
-        minkabu_soup2 = self.get_soup(minkabu_url2)
-
+        minkabu_url2 = f"https://minkabu.jp/stock/{ticker}/settlement"  # 決算情報
         kabutan_url = f"https://kabutan.jp/stock/?code={ticker}"
-        kabutan_soup = self.get_soup(kabutan_url)
+        kabutan_url_w = f"https://kabutan.jp/stock/kabuka?code={ticker}&ashi=wek"
+        kabutan_url_m = f"https://kabutan.jp/stock/kabuka?code={ticker}&ashi=mon"
+        kabutan_url_y = f"https://kabutan.jp/stock/kabuka?code={ticker}&ashi=yar"
+
+        gather = asyncio.gather(
+            self.get_soup(yahoo_url),
+            self.get_soup(minkabu_url),
+            self.get_soup(minkabu_url2),
+            self.get_soup(kabutan_url),
+            self.get_soup(kabutan_url_w),
+            self.get_soup(kabutan_url_m),
+            self.get_soup(kabutan_url_y)
+        )
+
+        yahoo_soup, minkabu_soup, minkabu_soup2, kabutan_soup, kabutan_soup_w, kabutan_soup_m, kabutan_soup_y \
+            = loop.run_until_complete(gather)
 
         try:
             self.name = yahoo_soup.select_one(
@@ -75,6 +90,14 @@ class CompanyProfile():
                            [1].text.replace(",", ""))
         self.daily_change = float(re.findall(
             r"（(.*)%）", yahoo_soup.select_one(".change").text)[0])
+        selector = "#stock_kabuka_table > table.stock_kabuka0 > tbody > tr > td:nth-child(7)"
+        self.weekly_change = float(kabutan_soup_w.select_one(
+            selector).text.replace("－", "nan"))
+        self.monthly_change = float(kabutan_soup_m.select_one(
+            selector).text.replace("－", "nan"))
+        self.yearly_change = float(kabutan_soup_y.select_one(
+            selector).text.replace("－", "nan"))
+
         self.url_keijiban = '=HYPERLINK("{}", "掲")'.format(
             yahoo_soup.select(".subNavi li a")[4]["href"]
         )
@@ -140,9 +163,10 @@ class CompanyProfile():
         self.daily_change = float(re.findall(
             r"（(.*)%）", yahoo_soup.select_one(".change").text)[0])
 
-    def get_soup(self, url):
+    async def get_soup(self, url):
+        loop = asyncio.get_event_loop()
         try:
-            res = requests.get(url)
+            res = await loop.run_in_executor(None, requests.get, url)
             soup = BeautifulSoup(res.text)
             return soup
 
@@ -153,6 +177,10 @@ class CompanyProfile():
 
 column_convertor = {
     "ticker": "code",
+    "daily_change": "前日比",
+    "weekly_change": "前週比",
+    "monthly_change": "前月比",
+    "yearly_change": "前年比",
     "dividend_rate": "利回",
     "market_cap": "cap",
     "description": "desc",
@@ -186,6 +214,7 @@ for i in df.index:
             continue
         df.loc[i, col] = company.__dict__[attr]
     print("...done")
+    time.sleep(0.5)
 
 list_to_draw = [df.columns.tolist()] + df.fillna("").values.tolist()
 ws.update("A1", list_to_draw, value_input_option="USER_ENTERED")
