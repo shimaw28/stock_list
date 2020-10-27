@@ -12,20 +12,19 @@ from bs4 import BeautifulSoup
 
 arg = sys.argv
 
-if "all" in arg:
-    UPDATE_ALL = True
+if len(arg) == 1:
+    print("please enter sheet name")
 else:
-    UPDATE_ALL = False
+    sheetname = arg[1]
 
-if "price" in arg:
-    PRICE_ONLY = True
-    UPDATE_ALL = True
-else:
-    PRICE_ONLY = False
+
+UPDATE_ALL = True
+PRICE_ONLY = False
+
 
 gc = gspread.service_account(filename=".keys/shimandou-bot-07299fe8b747.json")
 wb = gc.open("stock_list")
-ws = wb.worksheet("jp")
+ws = wb.worksheet(sheetname)
 df = pd.DataFrame(ws.get_all_records())
 print("worksheet loaded")
 
@@ -51,6 +50,7 @@ class CompanyProfile():
         self.description = None
         self.url_scouter = f'=HYPERLINK("https://monex.ifis.co.jp/index.php?sa=report_index&bcode={ticker}", "銘")'
         self.url_kabutan = f'=HYPERLINK("https://kabutan.jp/stock/?code={ticker}", "探")'
+        self.url_tradingview = f'=HYPERLINK("https://jp.tradingview.com/chart/?symbol=TSE%3A{ticker}", "T")'
         self.url_keijiban = None
         self.announcement_date = None
 
@@ -67,13 +67,13 @@ class CompanyProfile():
         kabutan_url_y = f"https://kabutan.jp/stock/kabuka?code={ticker}&ashi=yar"
 
         gather = asyncio.gather(
-            self.get_soup(yahoo_url),
-            self.get_soup(minkabu_url),
-            self.get_soup(minkabu_url2),
-            self.get_soup(kabutan_url),
-            self.get_soup(kabutan_url_w),
-            self.get_soup(kabutan_url_m),
-            self.get_soup(kabutan_url_y)
+            self.get_soup_parallel(yahoo_url),
+            self.get_soup_parallel(minkabu_url),
+            self.get_soup_parallel(minkabu_url2),
+            self.get_soup_parallel(kabutan_url),
+            self.get_soup_parallel(kabutan_url_w),
+            self.get_soup_parallel(kabutan_url_m),
+            self.get_soup_parallel(kabutan_url_y)
         )
 
         yahoo_soup, minkabu_soup, minkabu_soup2, kabutan_soup, kabutan_soup_w, kabutan_soup_m, kabutan_soup_y \
@@ -133,7 +133,7 @@ class CompanyProfile():
     def update_price(self):
         ticker = self.ticker
         yahoo_url = f"https://stocks.finance.yahoo.co.jp/stocks/detail/?code={ticker}.T"
-        yahoo_soup = self.get_soup(yahoo_url)
+        yahoo_soup = self.get_soup_parallel(yahoo_url)
 
         try:
             self.name = yahoo_soup.select_one(
@@ -143,7 +143,7 @@ class CompanyProfile():
             return
 
         minkabu_url = f"https://minkabu.jp/stock/{ticker}"
-        minkabu_soup = self.get_soup(minkabu_url)
+        minkabu_soup = self.get_soup_parallel(minkabu_url)
 
         minkabu_page = minkabu_soup.select(".wsnw.fwb")
         self.PER = float(
@@ -163,7 +163,7 @@ class CompanyProfile():
         self.daily_change = float(re.findall(
             r"（(.*)%）", yahoo_soup.select_one(".change").text)[0])
 
-    async def get_soup(self, url):
+    async def get_soup_parallel(self, url):
         loop = asyncio.get_event_loop()
         try:
             res = await loop.run_in_executor(None, requests.get, url)
@@ -186,6 +186,7 @@ column_convertor = {
     "description": "desc",
     "url_scouter": "銘",
     "url_kabutan": "探",
+    "url_tradingview": "TV",
     "url_keijiban": "掲",
     "announcement_date": "決算日"
 }
@@ -214,7 +215,7 @@ for i in df.index:
             continue
         df.loc[i, col] = company.__dict__[attr]
     print("...done")
-    time.sleep(0.5)
+    time.sleep(1)
 
 list_to_draw = [df.columns.tolist()] + df.fillna("").values.tolist()
 ws.update("A1", list_to_draw, value_input_option="USER_ENTERED")
